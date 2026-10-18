@@ -1624,3 +1624,20 @@ async def test_a_mixed_group_whose_dimming_did_not_leave_stays_lit(hass) -> None
 
     assert all(m.is_on is True for m in members)
     assert dimmer.brightness == 40
+
+
+@pytest.mark.parametrize(
+    ("requested", "sent"), [(2700, 800), (4600, 10400), (6500, 20000)]
+)
+async def test_a_goldsunda_lamp_is_rescaled_onto_the_mesh_range(
+    hass, requested: int, sent: int
+) -> None:
+    """Rated 2700..6500 K, but spread over the whole 800..20000 K mesh range."""
+    net = _fixture_network()
+    net = replace(net, nodes=(replace(net.nodes[0], cid=0x07D0),))
+    light, coordinator = _light(net)
+
+    await light.async_turn_on(color_temp_kelvin=requested)
+
+    assert ("set_ctl_temperature", 0x000D, sent) in coordinator.calls
+    assert light.color_temp_kelvin == requested

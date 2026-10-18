@@ -65,6 +65,20 @@ HA_BRIGHTNESS_MAX = 255
 DEFAULT_MIN_KELVIN = 2700
 DEFAULT_MAX_KELVIN = 6500
 
+# Goldsunda A12 spots (CID 0x07D0) are rated 2700..6500 K but spread that over
+# the whole mesh range (800..20000 K), and answer no range query. Rescale
+# linearly so Home Assistant shows and sets their real colour temperature.
+_SCALED_CTL_CIDS = {0x07D0}
+_RATED_KELVIN_RANGE = (DEFAULT_MIN_KELVIN, DEFAULT_MAX_KELVIN)
+_MESH_KELVIN_RANGE = (800, 20000)
+
+
+def _rescale(kelvin: int, source: tuple[int, int], target: tuple[int, int]) -> int:
+    """Map ``kelvin`` linearly from ``source`` onto ``target``."""
+    fraction = (kelvin - source[0]) / (source[1] - source[0])
+    return round(target[0] + fraction * (target[1] - target[0]))
+
+
 # Known company identifiers → friendly manufacturer names. Unknown CIDs fall
 # back to the raw hex (see ``_manufacturer``).
 _KNOWN_CIDS = {
@@ -241,6 +255,7 @@ class MeshLight(LightEntity):
         # construction rather than read per command: the options flow is an
         # ``OptionsFlowWithReload``, so changing it rebuilds every entity.
         self._invert_ctl = invert_ctl
+        self._scaled_ctl = node.cid in _SCALED_CTL_CIDS
 
         # Keyed on the element this light IS, which for a single-output node
         # is element 0, whose address is the node's — so every entity that
@@ -523,7 +538,11 @@ class MeshLight(LightEntity):
         up a Häfele lamp that the mirror was itself inverting: the quirk varies
         within a vendor, by model or firmware, so a CID cannot predict it.
         """
-        return self._mirror(kelvin) if self._invert_ctl else kelvin
+        if self._invert_ctl:
+            kelvin = self._mirror(kelvin)
+        if self._scaled_ctl:
+            kelvin = _rescale(kelvin, _RATED_KELVIN_RANGE, _MESH_KELVIN_RANGE)
+        return kelvin
 
     def _ha_kelvin(self, kelvin: int) -> int:
         """The value this lamp's CTL server reported → what to display.
@@ -537,7 +556,11 @@ class MeshLight(LightEntity):
         rather than one so the direction is legible where it is called — a
         single ``_ctl_kelvin`` used both ways reads as a bug.
         """
-        return self._mirror(kelvin) if self._invert_ctl else kelvin
+        if self._scaled_ctl:
+            kelvin = _rescale(kelvin, _MESH_KELVIN_RANGE, _RATED_KELVIN_RANGE)
+        if self._invert_ctl:
+            kelvin = self._mirror(kelvin)
+        return kelvin
 
     def _mirror(self, kelvin: int) -> int:
         """Reflect a Kelvin value around the midpoint of the EXPOSED range.
@@ -696,6 +719,13 @@ class MeshLight(LightEntity):
                 self._note_answer("set_ctl", result is not None)
                 drove_lightness = True
                 lit = lit or result is not None
+            logger.debug(
+                "%s: requested %d K, sent %d K, node answered %s",
+                self.entity_id,
+                kwargs[ATTR_COLOR_TEMP_KELVIN],
+                mesh_kelvin,
+                result,
+            )
             if result is not None:
                 self._color_temp_kelvin = self._ha_kelvin(result)
             else:
