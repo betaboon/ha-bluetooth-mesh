@@ -121,6 +121,22 @@ class GattBearer:
         else:
             self._data_in, self._data_out = PROXY_DATA_IN, PROXY_DATA_OUT
         self._reassembler = Reassembler()
+        # Resolve duplicate Mesh Proxy characteristic UUIDs to the copy
+        # belonging to the standard Mesh Provisioning/Proxy service.
+        service_uuid = (
+            "00001827-0000-1000-8000-00805f9b34fb"
+            if provisioning
+            else "00001828-0000-1000-8000-00805f9b34fb"
+        )
+
+        service = self._client.services.get_service(service_uuid)
+        if service is not None:
+            data_in = service.get_characteristic(self._data_in)
+            data_out = service.get_characteristic(self._data_out)
+            if data_in is not None:
+                self._data_in = data_in
+            if data_out is not None:
+                self._data_out = data_out
         self._on_message: Callable[[int, bytes], None] | None = None
         # A subscribe that never confirmed (see START_NOTIFY_TIMEOUT); kept so
         # stop() can cancel it rather than leave it running against a client
