@@ -104,6 +104,46 @@ def test_find_proxy_address_skips_non_connectable_match(hass) -> None:
         assert find_proxy_address(hass, NET_KEY) is None
 
 
+def test_find_proxy_address_accepts_a_match_another_scanner_can_connect(
+    hass,
+) -> None:
+    """The merged entry's connectable flag is its OWNING scanner's.
+
+    A passive scanner can own the entry while a connectable one still hears
+    the node; that node is reachable and must be returned, ranked by the
+    connectable path's RSSI rather than the passive scanner's.
+    """
+    passive_owned = _fake_info(
+        "AA:BB:CC:DD:EE:01",
+        {PROXY_SERVICE: _network_id_advert(NET_KEY)},
+        connectable=False,
+    )
+    passive_owned.rssi = -50
+    direct = _fake_info(
+        "AA:BB:CC:DD:EE:02", {PROXY_SERVICE: _network_id_advert(NET_KEY)}
+    )
+    direct.rssi = -70
+    path = mesh_transport.ProxyPath(
+        source="hci0", name="local", rssi=-80, free_slots=None
+    )
+    with (
+        patch.object(
+            mesh_transport.bluetooth,
+            "async_discovered_service_info",
+            return_value=[passive_owned, direct],
+        ),
+        patch.object(
+            mesh_transport, "connect_paths", return_value=[path]
+        ) as paths,
+    ):
+        assert find_proxy_addresses(hass, NET_KEY, strongest_first=True) == [
+            "AA:BB:CC:DD:EE:02",
+            "AA:BB:CC:DD:EE:01",
+        ]
+    # Only consulted for the entry that does not say connectable itself.
+    paths.assert_called_once_with(hass, "AA:BB:CC:DD:EE:01")
+
+
 def test_find_proxy_address_prefers_connectable_match(hass) -> None:
     """Skip a non-connectable match to return a later connectable one.
 

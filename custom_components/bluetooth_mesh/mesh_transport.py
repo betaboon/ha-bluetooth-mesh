@@ -201,12 +201,23 @@ def find_proxy_addresses(
                 info.address, network_id.hex(), age,
             )
             continue
-        if getattr(info, "connectable", False):
+        # The merged service-info entry is owned by one scanner, so its
+        # ``connectable`` flag does not necessarily describe every scanner
+        # currently hearing this address. A passive advertisement proxy can
+        # own the merged entry while a local adapter still provides a usable
+        # GATT path. Check HA's per-scanner connectable view before rejecting
+        # the address.
+        connectable = getattr(info, "connectable", False)
+        paths = [] if connectable else connect_paths(hass, info.address)
+        if connectable or paths:
             logger.debug(
-                "mesh proxy %s advertises Network ID %s (connectable)",
+                "mesh proxy %s advertises Network ID %s (connectable%s)",
                 info.address, network_id.hex(),
+                "" if connectable else f" via {len(paths)} other scanner(s)",
             )
-            rssi = getattr(info, "rssi", None)
+            # A non-connectable merged entry carries the passive scanner's
+            # RSSI; rank by the strongest connectable path instead.
+            rssi = getattr(info, "rssi", None) if connectable else paths[0].rssi
             found.append((info.address, rssi if isinstance(rssi, int) else -127))
             continue
         logger.debug(
